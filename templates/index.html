@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>M8 PATCH FINDER</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="scanlines"></div>
+
+<div id="app">
+
+  <!-- ─── HEADER ──────────────────────────────────────────────────────── -->
+  <header id="header">
+    <div class="header-left">
+      <span class="header-title">M8 PATCH FINDER</span>
+      <span class="header-version">v0.2.0</span>
+    </div>
+    <div class="header-right">
+      <span class="header-subtitle">DIRTYWAVE M8 · AUDIO ANALYSIS UTILITY</span>
+    </div>
+  </header>
+
+  <!-- ─── SECTION 01: LOAD ────────────────────────────────────────────── -->
+  <section id="load-section" class="section">
+    <div class="section-label">01 / LOAD TRACK</div>
+
+    <div class="url-input-row">
+      <span class="prompt-char">&gt;_</span>
+      <input
+        id="url-input"
+        type="text"
+        placeholder="PASTE SOUNDCLOUD OR YOUTUBE URL"
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <button id="load-btn" class="btn-primary">LOAD</button>
+    </div>
+
+    <div id="load-progress" class="progress-block hidden">
+      <div class="step-row" id="row-download">
+        <span class="row-num">01</span>
+        <span class="row-label">DOWNLOAD</span>
+        <span class="row-bar"><span class="bar-fill" id="bar-download"></span></span>
+        <span class="row-pct" id="pct-download">---</span>
+      </div>
+    </div>
+
+    <div id="load-error" class="error-msg hidden"></div>
+  </section>
+
+  <!-- ─── SECTION 02: CONFIGURE ──────────────────────────────────────── -->
+  <section id="wave-section" class="section hidden">
+    <div class="section-label">02 / CONFIGURE</div>
+
+    <div id="track-info" class="track-info"></div>
+
+    <div id="waveform-screen">
+      <div class="screen-header">
+        <span class="screen-label">WAVEFORM</span>
+        <span class="screen-hint">drag to select analysis region</span>
+      </div>
+      <div id="waveform"></div>
+      <div id="transport">
+        <button id="play-btn" class="btn-transport" disabled>▶ PLAY</button>
+        <div class="transport-times">
+          <span id="time-current">00:00</span>
+          <span class="time-sep">/</span>
+          <span id="time-total">00:00</span>
+        </div>
+        <div id="crop-display">
+          <span class="crop-label">REGION</span>
+          <span id="crop-start">--:--</span>
+          <span class="crop-arrow">→</span>
+          <span id="crop-end">--:--</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="analyze-form">
+      <div class="form-row">
+        <label class="form-label" for="desc-input">TARGET SOUND</label>
+        <input
+          id="desc-input"
+          type="text"
+          placeholder="e.g. the plucked lead synth in the chorus"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="stem-select">STEM</label>
+        <select id="stem-select">
+          <option value="other">OTHER   — synths, guitars, everything non-drums/bass/vocal</option>
+          <option value="bass">BASS    — bass synth, bass guitar, sub bass</option>
+          <option value="vocals">VOCALS  — vocal lead, choral, voice synthesis</option>
+          <option value="drums">DRUMS   — percussion, kick, snare</option>
+          <option value="full">FULL    — no stem separation, analyze full mix</option>
+        </select>
+      </div>
+      <div class="form-row form-row-btn">
+        <button id="analyze-btn" class="btn-primary btn-analyze">ANALYZE</button>
+        <span class="form-hint">tip: set region on waveform to isolate target section</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── SECTION 03: RESULTS ─────────────────────────────────────────── -->
+  <section id="results-section" class="section hidden">
+    <div class="section-label">03 / RESULTS</div>
+
+    <div id="analyze-progress" class="progress-block">
+      <div class="step-row" id="row-stems">
+        <span class="row-num">01</span>
+        <span class="row-label">STEMS</span>
+        <span class="row-bar"><span class="bar-fill" id="bar-stems"></span></span>
+        <span class="row-pct" id="pct-stems">---</span>
+      </div>
+      <div class="step-row" id="row-analyze">
+        <span class="row-num">02</span>
+        <span class="row-label">ANALYZE</span>
+        <span class="row-bar"><span class="bar-fill" id="bar-analyze"></span></span>
+        <span class="row-pct" id="pct-analyze">---</span>
+      </div>
+      <div class="step-row" id="row-spectrogram">
+        <span class="row-num">03</span>
+        <span class="row-label">SPECGRAM</span>
+        <span class="row-bar"><span class="bar-fill" id="bar-spectrogram"></span></span>
+        <span class="row-pct" id="pct-spectrogram">---</span>
+      </div>
+    </div>
+
+    <div id="analyze-error" class="error-msg hidden"></div>
+
+    <div id="results-content" class="hidden">
+
+      <div id="spectrogram-panel">
+        <div class="panel-label">SPECTROGRAM — MEL FREQUENCY + CHROMAGRAM</div>
+        <img id="spectrogram-img" src="" alt="Mel spectrogram and chromagram">
+      </div>
+
+      <div id="json-panel">
+        <div class="panel-header">
+          <span class="panel-label">ANALYSIS OUTPUT</span>
+          <div class="panel-actions">
+            <button id="copy-btn" class="btn-secondary">COPY JSON</button>
+            <button id="re-analyze-btn" class="btn-secondary">← BACK</button>
+          </div>
+        </div>
+        <div class="json-instructions">
+          Open Claude Code in the m8-patch-finder folder · paste JSON below · attach spectrogram image · ask for M8 patch
+        </div>
+        <pre id="result-json"></pre>
+      </div>
+
+    </div>
+  </section>
+
+</div><!-- #app -->
+
+<script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+<script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
