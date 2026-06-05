@@ -63,7 +63,7 @@ def download_audio(url, dl_dir):
 def separate_stems(wav_path, stems_dir):
     print("[2/4] Separating stems with Demucs (first run downloads ~1 GB model)...")
     r = subprocess.run(
-        ['python', '-m', 'demucs', '--name', 'htdemucs',
+        ['python3', '-m', 'demucs', '--name', 'htdemucs',
          '--out', str(stems_dir), str(wav_path)],
         capture_output=True, text=True
     )
