@@ -4,11 +4,12 @@ Analyze a song from SoundCloud or YouTube and get Dirtywave M8 synth patch recom
 
 ## How it works
 
-1. `analyze.py` downloads the track, separates stems with [Demucs](https://github.com/facebookresearch/demucs), extracts spectral/temporal features with librosa, and generates a spectrogram image.
-2. You paste the output JSON + attach the spectrogram PNG into a Claude Code session.
-3. Claude reads `CLAUDE.md` (auto-loaded) and outputs specific M8 engine + parameter recommendations.
+1. **Load** — paste a SoundCloud or YouTube URL into the web app and download the track
+2. **Configure** — play the audio, drag to select the section where your target sound lives, describe it, pick a stem
+3. **Analyze** — the app separates stems with Demucs, extracts spectral/pitch/envelope features with librosa, and generates a spectrogram
+4. **Get the patch** — copy the analysis JSON + download the spectrogram, then paste both into a Claude Code session opened in this folder
 
-No AI API key required — all analysis runs locally.
+No AI API key required — all analysis runs locally. Claude interprets the results using `CLAUDE.md` as its reference guide.
 
 ---
 
@@ -17,105 +18,95 @@ No AI API key required — all analysis runs locally.
 ### Requirements
 
 - Python 3.9+
-- `ffmpeg` installed and on your PATH ([ffmpeg.org](https://ffmpeg.org/download.html))
+- `ffmpeg` (installed via Homebrew: `brew install ffmpeg`)
 
 ### Install
 
 ```bash
-cd /path/to/m8-patch-finder
-pip install -r requirements.txt
+cd /Users/davidolson/Documents/m8-patch-finder
+pip3 install -r requirements.txt
 ```
 
-> **Note:** Demucs downloads a ~1 GB neural network model on first run. This happens automatically.
+> **First run note:** Demucs downloads a ~1 GB neural network model the first time it separates stems. This is a one-time download that happens automatically.
 
 ---
 
-## Usage
+## Running the app
 
 ```bash
-python analyze.py <url> "<sound description>"
+cd /Users/davidolson/Documents/m8-patch-finder
+python3 app.py
 ```
 
-### Examples
-
-```bash
-# Isolate the "other" stem (default — synths, guitar, anything not drums/bass/vocals)
-python analyze.py "https://soundcloud.com/artist/track" "the plucked lead synth in the chorus"
-
-# Analyze only the bass stem
-python analyze.py "https://youtu.be/VIDEO_ID" "the growling synth bass" --stem bass
-
-# Analyze a specific time range (e.g. the chorus only)
-python analyze.py "https://youtu.be/VIDEO_ID" "the pad in the breakdown" --start 1:20 --end 2:00
-
-# Analyze the full mix (no stem separation)
-python analyze.py "https://soundcloud.com/artist/track" "the whole texture" --stem full
-```
-
-### Stem options
-
-| `--stem` | What it contains |
-|---|---|
-| `other` (default) | Synths, guitars, everything not drums/bass/vocals |
-| `bass` | Bass guitar, sub bass, bass synth |
-| `vocals` | Vocals |
-| `drums` | Drums, percussion |
-| `full` | No separation — full mix |
-
-### Time range tip
-
-If the sound you want only appears in a specific section (chorus, drop, bridge), use `--start` and `--end` to focus the analysis. This gives much cleaner feature extraction than analyzing a 4-minute track where the target sound appears for 30 seconds.
+Then open **http://localhost:5000** in your browser.
 
 ---
 
-## Getting M8 patch recommendations
+## Workflow
 
-After `analyze.py` finishes it prints the paths to two output files:
+### Step 1 — Load a track
 
-```
-Done.
-  JSON:        output/Track_Name/analysis.json
-  Spectrogram: output/Track_Name/spectrogram.png
-```
+Paste a SoundCloud or YouTube URL into the input field and click **LOAD**. The download progress streams live. When it finishes, the waveform appears.
 
-Then:
+> Tracks already downloaded in a previous session load instantly from disk cache.
 
-1. Open a new Claude Code session in this project folder:
+### Step 2 — Configure
+
+- **Play** the audio to locate your target sound
+- **Drag across the waveform** to select the region containing it — this sets the analysis window. The crop timestamps update in real time. If you skip this, the full track is analyzed.
+- **Describe the target sound** — e.g. *"the plucked lead synth in the chorus"*
+- **Choose a stem** — pick which Demucs separation layer to analyze:
+
+| Stem | Use for |
+|------|---------|
+| OTHER (default) | Synths, guitars, pads — anything that isn't drums, bass, or vocals |
+| BASS | Bass synth, sub bass, bass guitar |
+| VOCALS | Vocal lead, choir, voice synthesis |
+| DRUMS | Percussion, kick, snare |
+| FULL | No stem separation — analyze the full mix |
+
+### Step 3 — Analyze
+
+Click **ANALYZE**. Three steps stream progress live:
+
+1. **STEMS** — Demucs separates the track (1–3 min on first run; instant if cached from a prior session)
+2. **ANALYZE** — onset detection, spectral/pitch/envelope/harmonic feature extraction
+3. **SPECGRAM** — mel spectrogram + chromagram image rendered
+
+When complete, the spectrogram image and full analysis JSON appear.
+
+### Step 4 — Get your M8 patch
+
+1. Click **DOWNLOAD JSON** and **DOWNLOAD SPECTROGRAM** to save both files
+2. Open a new Claude Code session in this project folder:
    ```bash
-   cd /path/to/m8-patch-finder
+   cd /Users/davidolson/Documents/m8-patch-finder
    claude
    ```
-2. Paste the full contents of `analysis.json`
-3. Attach `spectrogram.png` as an image
-4. Prompt: `"Recommend an M8 patch to imitate: [your sound description]"`
+3. Paste the JSON contents into the session
+4. Attach the spectrogram PNG as an image
+5. Prompt: `"Recommend an M8 patch to imitate: [your sound description]"`
 
-Claude will read `CLAUDE.md` automatically (it's the project context file) and output an engine recommendation with specific hex parameter values for each M8 parameter.
-
----
-
-## Output files
-
-Each analysis run creates a folder under `output/` named after the track:
-
-```
-output/
-  Track_Name/
-    analysis.json     ← paste into Claude
-    spectrogram.png   ← attach as image in Claude
-  _workspace/         ← intermediate files (downloads, stems) — safe to delete
-```
+Claude reads `CLAUDE.md` automatically (it's the project context file) and outputs a recommended M8 engine with specific hex parameter values for each setting.
 
 ---
 
 ## Troubleshooting
 
-**yt-dlp fails:** Some tracks on SoundCloud require a free account. Try passing cookies:
-```bash
-yt-dlp --cookies-from-browser firefox <url>
-```
+**Waveform doesn't play in the browser**
+The waveform player uses the downloaded WAV file served locally — it does not stream from SoundCloud or YouTube. If the waveform appears but playback doesn't start, try clicking directly on the waveform rather than the play button. Large files (> 100 MB) may take a few seconds to decode.
 
-**Demucs is slow:** It runs on CPU by default. If you have a compatible GPU, add `--device cuda` (NVIDIA) or `--device mps` (Apple Silicon) to the demucs call inside `analyze.py`.
+**yt-dlp download fails**
+Some SoundCloud tracks require a logged-in account. Try a YouTube link for the same track instead — YouTube links work more reliably.
 
-**Poor stem separation:** Demucs works best on produced, mixed music. Live recordings or heavily distorted tracks may bleed between stems. Use `--stem full` as a fallback.
+**Demucs is slow / stuck at 0%**
+On the very first run, Demucs silently downloads its ~1 GB model before separating. The progress bar will sit near 0% for several minutes. This is normal and only happens once.
 
-**"No pitch detected":** The target sound may be noise-based or atonal. The analysis still works — `pitch.note` will read `unpitched` and Claude will use spectral features instead to guide synthesis choices.
+**Poor stem separation**
+Demucs works best on commercially produced, mixed music. Live recordings or heavily distorted tracks may bleed between stems. Use the **FULL** stem option as a fallback.
+
+**No pitch detected in results**
+The target sound may be noise-based or atonal (e.g. a texture pad, a percussion hit). The analysis still works — `pitch.note` will read `unpitched` and Claude will use spectral and harmonic features instead.
+
+**"Back" button / running a second analysis**
+Click **← BACK** in the results panel to return to the waveform. You can adjust the crop region, change the stem, or update the description and run another analysis. Cached stems are reused automatically.

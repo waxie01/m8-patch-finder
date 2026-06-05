@@ -13,9 +13,10 @@ When a user pastes an `analysis.json` file and/or attaches a `spectrogram.png`, 
 
 ## Workflow
 
-The user will provide one or both of:
-- **analysis.json** — structured feature extraction output from `analyze.py`
-- **spectrogram.png** — mel spectrogram + chromagram image
+The user has run the M8 Patch Finder web app (`python3 app.py` → http://localhost:5000), loaded a track, selected a crop region on the waveform, and clicked Analyze. They will provide one or both of:
+
+- **analysis.json** — structured feature extraction output (downloaded from the app's results panel)
+- **spectrogram.png** — mel spectrogram + chromagram image (downloaded from the app's results panel)
 
 Standard prompt: *"Recommend an M8 patch to imitate: [sound description]"*
 
