@@ -48,7 +48,7 @@ def safe_slug(name):
 def download_audio(url, dl_dir):
     print("[1/4] Downloading audio...")
     r = subprocess.run(
-        ['yt-dlp', '-x', '--audio-format', 'wav', '--audio-quality', '0',
+        ['python3', '-m', 'yt_dlp', '-x', '--audio-format', 'wav', '--audio-quality', '0',
          '--no-playlist', '-o', str(dl_dir / '%(title)s.%(ext)s'), url],
         capture_output=True, text=True
     )
