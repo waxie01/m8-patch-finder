@@ -4,14 +4,14 @@ M8 Patch Finder - Audio analysis pipeline
 Extracts synthesis-relevant features for M8 patch design.
 
 Usage:
-  python analyze.py <url> "<sound description>"
-  python analyze.py <url> "<sound description>" --start 0:45 --end 1:15
-  python analyze.py <url> "<sound description>" --stem bass
+  python3 analyze.py <url> "<sound description>"
+  python3 analyze.py <url> "<sound description>" --start 0:45 --end 1:15
+  python3 analyze.py <url> "<sound description>" --stem bass
 
 Arguments:
   url           SoundCloud or YouTube URL
   description   What sound to target, e.g. "plucked lead synth in chorus"
-  --start       Analysis start time (MM:SS or seconds)
+  --start       Analysis start time (MM:SS or seconds) — crop the stem before onset detection
   --end         Analysis end time (MM:SS or seconds)
   --stem        Which Demucs stem to analyze: other (default), vocals, bass, drums, full
 """
@@ -31,7 +31,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
-SPEC_HOP = 512  # librosa default hop length, used consistently across all feature calls
+SPEC_HOP = 512        # hop length used consistently across all librosa calls
+NOTE_WINDOW_SEC = 2.5 # seconds of audio to analyze around the best onset
 
 
 def parse_time(t):
@@ -72,10 +73,8 @@ def separate_stems(wav_path, stems_dir):
 
     stems = {}
     for name in ('drums', 'bass', 'vocals', 'other'):
-        # htdemucs output path
         p = stems_dir / 'htdemucs' / wav_path.stem / f'{name}.wav'
         if not p.exists():
-            # fallback: search recursively
             found = list(stems_dir.glob(f'**/{name}.wav'))
             if found:
                 p = found[0]
@@ -87,8 +86,48 @@ def separate_stems(wav_path, stems_dir):
     return stems
 
 
+def find_best_onset_window(y, sr):
+    """
+    Detect note onsets and return a short audio window starting at the most
+    energetic one. This isolates a single note event from a mixed stem so that
+    envelope estimation reflects the target sound rather than the full stem mix.
+
+    Returns (window_y, onset_time_sec, onset_count)
+    """
+    onset_frames = librosa.onset.onset_detect(
+        y=y, sr=sr, hop_length=SPEC_HOP, backtrack=True, units='frames'
+    )
+    n_onsets = int(len(onset_frames))
+
+    if n_onsets == 0:
+        # No clear onsets: sustained texture (pad). Use a window from 25% in.
+        start_sample = len(y) // 4
+        end_sample = min(start_sample + int(NOTE_WINDOW_SEC * sr), len(y))
+        return y[start_sample:end_sample], float(start_sample / sr), 0
+
+    # Find the onset followed by the highest RMS peak in the next 150ms
+    rms = librosa.feature.rms(y=y, hop_length=SPEC_HOP)[0]
+    look_ahead_frames = max(int(0.15 * sr / SPEC_HOP), 1)
+
+    best_frame = onset_frames[0]
+    best_energy = 0.0
+    for frame in onset_frames:
+        end_frame = min(frame + look_ahead_frames, len(rms) - 1)
+        peak = float(np.max(rms[frame:end_frame + 1])) if frame < len(rms) else 0.0
+        if peak > best_energy:
+            best_energy = peak
+            best_frame = frame
+
+    onset_sample = int(librosa.frames_to_samples(best_frame, hop_length=SPEC_HOP))
+    end_sample = min(onset_sample + int(NOTE_WINDOW_SEC * sr), len(y))
+    onset_time_sec = float(librosa.frames_to_time(best_frame, sr=sr, hop_length=SPEC_HOP))
+
+    return y[onset_sample:end_sample], onset_time_sec, n_onsets
+
+
 def estimate_adsr(y, sr):
-    frame_len = max(int(0.01 * sr), 64)
+    """Estimate ADSR envelope from a short note window."""
+    frame_len = max(int(0.005 * sr), 64)  # 5ms frames for fine resolution
     hop = frame_len // 2
     rms = librosa.feature.rms(y=y, frame_length=frame_len, hop_length=hop)[0]
 
@@ -103,13 +142,13 @@ def estimate_adsr(y, sr):
     onset_idx = int(np.argmax(rms_n > 0.05)) if np.any(rms_n > 0.05) else 0
     peak_idx = int(np.argmax(rms_n))
 
-    attack_ms = float(t_ms[peak_idx] - t_ms[onset_idx]) if peak_idx > onset_idx else 5.0
+    attack_ms = float(t_ms[peak_idx] - t_ms[onset_idx]) if peak_idx > onset_idx else 3.0
 
     sus_start = min(peak_idx + max(n // 5, 1), n - 1)
     sus_end = min(n * 4 // 5, n - 1)
     sustain_level = float(np.median(rms_n[sus_start:sus_end])) if sus_start < sus_end else 0.5
 
-    decay_ms = float(t_ms[sus_start] - t_ms[peak_idx]) if sus_start > peak_idx else 50.0
+    decay_ms = float(t_ms[sus_start] - t_ms[peak_idx]) if sus_start > peak_idx else 30.0
 
     rel_start = min(n * 4 // 5, n - 1)
     rel_seg = rms_n[rel_start:]
@@ -118,7 +157,7 @@ def estimate_adsr(y, sr):
         rel_end = rel_start + int(below[0]) if len(below) else n - 1
         release_ms = float(t_ms[min(rel_end, n - 1)] - t_ms[rel_start])
     else:
-        release_ms = 100.0
+        release_ms = 80.0
 
     if attack_ms < 20 and decay_ms < 300 and sustain_level < 0.3:
         env_type = 'plucked'
@@ -143,8 +182,19 @@ def estimate_adsr(y, sr):
 def analyze_audio(audio_path, start_sec, end_sec):
     print("[3/4] Extracting audio features...")
     duration_arg = (end_sec - start_sec) if (start_sec is not None and end_sec is not None) else None
-    y, sr = librosa.load(str(audio_path), sr=None, mono=True,
-                         offset=start_sec or 0.0, duration=duration_arg)
+    y_full, sr = librosa.load(str(audio_path), sr=None, mono=True,
+                              offset=start_sec or 0.0, duration=duration_arg)
+
+    # Find the most energetic note onset and extract a short window.
+    # All analysis runs on this window so envelope/spectral features reflect
+    # a single note event rather than the full mixed stem.
+    note_y, onset_time_sec, n_onsets = find_best_onset_window(y_full, sr)
+
+    # Absolute onset time in the original file (add user --start offset if any)
+    abs_onset_sec = (start_sec or 0.0) + onset_time_sec
+
+    # Use the note window for all feature extraction
+    y = note_y
 
     # --- Spectral ---
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=SPEC_HOP)[0]
@@ -230,7 +280,18 @@ def analyze_audio(audio_path, start_sec, end_sec):
     adsr = estimate_adsr(y, sr)
 
     return {
-        'duration_seconds': round(float(librosa.get_duration(y=y, sr=sr)), 1),
+        'onset_window': {
+            'onset_time_in_stem_sec': round(onset_time_sec, 3),
+            'absolute_onset_time_sec': round(abs_onset_sec, 3),
+            'window_duration_sec': round(float(librosa.get_duration(y=y, sr=sr)), 2),
+            'total_onsets_detected': n_onsets,
+            'note': (
+                'Analysis performed on a {:.1f}s window starting at the most energetic note onset. '
+                'All features reflect this single-note window, not the full stem.'.format(
+                    float(librosa.get_duration(y=y, sr=sr))
+                )
+            ),
+        },
         'spectral': {
             'centroid_mean_hz': round(centroid_mean, 1),
             'centroid_std_hz': round(float(np.std(centroid)), 1),
@@ -260,24 +321,30 @@ def analyze_audio(audio_path, start_sec, end_sec):
 
 
 def generate_spectrogram(audio_path, out_path, start_sec, end_sec):
+    """Generate mel spectrogram + chromagram for the given time window."""
     duration_arg = (end_sec - start_sec) if (start_sec is not None and end_sec is not None) else None
     y, sr = librosa.load(str(audio_path), sr=None, mono=True,
                          offset=start_sec or 0.0, duration=duration_arg)
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 8))
 
+    time_label = ''
+    if start_sec is not None:
+        m, s = divmod(int(start_sec), 60)
+        time_label = f' [{m}:{s:02d}–{m}:{s + int(end_sec - start_sec):02d}]' if end_sec else f' [from {m}:{s:02d}]'
+
     S_mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128,
                                             fmax=8000, hop_length=SPEC_HOP)
     S_db = librosa.power_to_db(S_mel, ref=np.max)
     img = librosa.display.specshow(S_db, x_axis='time', y_axis='mel', sr=sr,
                                     fmax=8000, hop_length=SPEC_HOP, ax=axes[0])
-    axes[0].set_title('Mel Spectrogram (dB)')
+    axes[0].set_title(f'Mel Spectrogram (dB){time_label}')
     fig.colorbar(img, ax=axes[0], format='%+2.0f dB')
 
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=SPEC_HOP)
     img2 = librosa.display.specshow(chroma, x_axis='time', y_axis='chroma',
                                      sr=sr, hop_length=SPEC_HOP, ax=axes[1])
-    axes[1].set_title('Chromagram (pitch class energy over time)')
+    axes[1].set_title(f'Chromagram (pitch class energy){time_label}')
     fig.colorbar(img2, ax=axes[1])
 
     plt.tight_layout()
@@ -291,8 +358,8 @@ def main():
     )
     parser.add_argument('url', help='SoundCloud or YouTube URL')
     parser.add_argument('description', help='Target sound, e.g. "plucked lead synth in chorus"')
-    parser.add_argument('--start', default=None, help='Analysis start time (MM:SS or seconds)')
-    parser.add_argument('--end', default=None, help='Analysis end time (MM:SS or seconds)')
+    parser.add_argument('--start', default=None, help='Crop stem from this time before analysis (MM:SS or seconds)')
+    parser.add_argument('--end', default=None, help='Crop stem to this time before analysis (MM:SS or seconds)')
     parser.add_argument('--stem', default='other',
                         choices=['other', 'vocals', 'bass', 'drums', 'full'],
                         help='Demucs stem to analyze (default: other)')
@@ -332,13 +399,15 @@ def main():
         analysis_audio = stems[target]
         stem_label = target
 
-    # Analysis
+    # Feature extraction (onset-windowed)
     features = analyze_audio(analysis_audio, start_sec, end_sec)
 
-    # Spectrogram
+    # Spectrogram zoomed to the note onset window
     print("[4/4] Generating spectrogram...")
     spec_path = track_out / 'spectrogram.png'
-    generate_spectrogram(analysis_audio, spec_path, start_sec, end_sec)
+    onset_abs = features['onset_window']['absolute_onset_time_sec']
+    spec_end = onset_abs + NOTE_WINDOW_SEC
+    generate_spectrogram(analysis_audio, spec_path, onset_abs, spec_end)
 
     # Write JSON
     result = {
@@ -347,7 +416,7 @@ def main():
             'url': args.url,
             'target_sound_description': args.description,
             'stem_analyzed': stem_label,
-            'time_range': {'start_seconds': start_sec, 'end_seconds': end_sec},
+            'user_time_range': {'start_seconds': start_sec, 'end_seconds': end_sec},
         },
         'analysis': features,
         'output_files': {
@@ -362,6 +431,8 @@ def main():
     print(f"\nDone.")
     print(f"  JSON:        {json_path}")
     print(f"  Spectrogram: {spec_path}")
+    print(f"  Onset used:  {onset_abs:.1f}s into stem "
+          f"({features['onset_window']['total_onsets_detected']} total onsets detected)")
     print(f"\nTo get M8 patch recommendations:")
     print(f"  1. Open a new Claude Code session in this project folder")
     print(f"  2. Paste the contents of {json_path}")
